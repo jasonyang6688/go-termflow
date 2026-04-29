@@ -138,14 +138,21 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          find dist -type f -maxdepth 3 -print -exec cp {} release-files/ \;
+          find release-files -type f -maxdepth 1 -print
+          test "$(find release-files -type f -maxdepth 1 | wc -l)" -gt 0
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+            gh release upload "${GITHUB_REF_NAME}" release-files/* --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" dist/* \
+            gh release create "${GITHUB_REF_NAME}" release-files/* \
               --title "TermFlow ${GITHUB_REF_NAME}" \
               --notes "Desktop builds for Windows and macOS."
           fi
