@@ -18,6 +18,7 @@ const envColors: Record<string, string> = {
   <button :class="['tab', { active }]" @click="emit('activate')">
     <span class="tab-dot" :style="{ background: envColors[session.env] ?? 'var(--pencil)' }" />
     <span class="tab-name">{{ session.connectionName }}</span>
+    <span v-if="!session.connected" class="tab-state">closed</span>
     <span class="tab-close" @click.stop="emit('close')">×</span>
   </button>
 </template>
@@ -62,6 +63,12 @@ const envColors: Record<string, string> = {
   font-size: 16px;
   line-height: 1;
   font-family: 'JetBrains Mono', monospace;
+}
+.tab-state {
+  color: var(--env-prod);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  text-transform: uppercase;
 }
 .tab-close:hover { opacity: 1; }
 </style>

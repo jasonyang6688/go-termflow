@@ -40,7 +40,7 @@ watch(() => props.activePanel, (panel) => {
 
 function submitCommandDraft() {
   const command = commandDraft.value.trim()
-  if (!command || !activeSession.value) return
+  if (!command || !activeSession.value?.connected) return
   if (sendCommandToSession(activeSession.value.id, command, true)) {
     commandDraft.value = ''
   }
@@ -141,11 +141,12 @@ function submitCommandDraft() {
       <span class="entry-prefix">{{ activeSession.connectionName }}</span>
       <input
         v-model="commandDraft"
+        :disabled="!activeSession.connected"
         spellcheck="false"
         autocomplete="off"
-        placeholder="Paste or type a command, edit it, then press Enter"
+        :placeholder="activeSession.connected ? 'Paste or type a command, edit it, then press Enter' : 'Session is closed'"
       />
-      <button type="submit" :disabled="!commandDraft.trim()">Run</button>
+      <button type="submit" :disabled="!activeSession.connected || !commandDraft.trim()">Run</button>
     </form>
     <QuickCommandBar v-if="!monitorMode" :active-session="activeSession" />
 
@@ -153,7 +154,7 @@ function submitCommandDraft() {
     <div class="status-bar">
       <template v-if="activeSession">
         <span class="env-dot" :class="`env-${activeSession.env}`" />
-        <span class="status-text">connected</span>
+        <span class="status-text">{{ activeSession.connected ? 'connected' : 'disconnected' }}</span>
         <span class="status-sep">/</span>
         <span class="status-text">{{ activeSession.connectionName }}</span>
         <div class="status-spacer" />

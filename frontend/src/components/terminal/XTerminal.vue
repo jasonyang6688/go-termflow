@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { EventsOff, EventsOn } from '../../../wailsjs/runtime/runtime'
 import { registerTerminalWriter } from '../../stores/terminalBridge'
+import { markSessionClosed } from '../../stores/sessions'
 import { settings } from '../../stores/uiSettings'
 import '@xterm/xterm/css/xterm.css'
 
@@ -17,6 +18,8 @@ let unregisterWriter: (() => void) | undefined
 let disposeDataInput: (() => void) | undefined
 let removeDataListener: (() => void) | undefined
 let removeExitListener: (() => void) | undefined
+let pasteInFlight = false
+let remoteClosed = false
 
 const isPreview = props.sessionId.startsWith('preview-')
 
@@ -73,6 +76,7 @@ onMounted(() => {
   disposeDataInput = () => dataInput.dispose()
 
   unregisterWriter = registerTerminalWriter(props.sessionId, (command, execute) => {
+    if (remoteClosed) return
     if (isPreview) {
       term.write(command)
       if (execute) term.write('\r\n$ ')
@@ -118,6 +122,8 @@ async function attachRemotePty() {
       term.write(decodeBase64(encoded))
     })
     removeExitListener = EventsOn(`ssh:exit:${props.sessionId}`, (message: string) => {
+      remoteClosed = true
+      markSessionClosed(props.sessionId)
       term.writeln('')
       term.writeln(`\x1b[31m[session closed${message ? `: ${message}` : ''}]\x1b[0m`)
     })
@@ -131,10 +137,15 @@ async function attachRemotePty() {
 }
 
 async function sendRemoteInput(input: string) {
+  if (remoteClosed) return
   try {
     const { SSHWrite } = await import('../../../wailsjs/go/main/App')
     await SSHWrite(props.sessionId, input)
   } catch (e) {
+    if (isClosedSessionError(e)) {
+      remoteClosed = true
+      markSessionClosed(props.sessionId)
+    }
     term.writeln('')
     term.writeln(`\x1b[31m[write failed: ${formatError(e)}]\x1b[0m`)
   }
@@ -163,7 +174,8 @@ function handleTerminalKey(event: KeyboardEvent) {
   }
 
   if (ctrlOrMeta && key === 'v') {
-    return true
+    pasteClipboardFromKeyboard(event)
+    return false
   }
 
   if (ctrlOrMeta && event.shiftKey && key === 'c') {
@@ -175,7 +187,8 @@ function handleTerminalKey(event: KeyboardEvent) {
   }
 
   if (ctrlOrMeta && event.shiftKey && key === 'v') {
-    return true
+    pasteClipboardFromKeyboard(event)
+    return false
   }
 
   return true
@@ -201,6 +214,20 @@ async function pasteClipboard() {
     }
   } catch (e) {
     console.warn('paste failed:', e)
+  }
+}
+
+async function pasteClipboardFromKeyboard(event: KeyboardEvent) {
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.repeat || pasteInFlight) return
+  pasteInFlight = true
+  try {
+    await pasteClipboard()
+  } finally {
+    window.setTimeout(() => {
+      pasteInFlight = false
+    }, 0)
   }
 }
 
@@ -238,6 +265,11 @@ function decodeBase64(encoded: string) {
 
 function formatError(e: unknown) {
   return e instanceof Error ? e.message : String(e)
+}
+
+function isClosedSessionError(e: unknown) {
+  return formatError(e).toLowerCase().includes('session') &&
+    formatError(e).toLowerCase().includes('closed')
 }
 
 function focusTerminal() {

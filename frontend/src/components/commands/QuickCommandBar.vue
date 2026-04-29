@@ -25,6 +25,7 @@ function runCommand(cmd: string) {
     didDrag.value = false
     return
   }
+  if (!props.activeSession?.connected) return
   if (preferences.value.dangerousCommandConfirm && isDangerousCommand(cmd) && !window.confirm(`Run "${cmd}"?`)) {
     return
   }
@@ -104,7 +105,7 @@ function resetDrag() {
         ]"
         :title="cmd.command"
         draggable="true"
-        :disabled="!activeSession"
+        :disabled="!activeSession?.connected"
         @dragstart="startDrag($event, cmd)"
         @dragover="overCommand($event, cmd)"
         @drop="dropCommand($event, cmd)"
@@ -116,7 +117,7 @@ function resetDrag() {
       <button
         class="pill pill-add"
         title="Add command for this server"
-        :disabled="!activeSession"
+        :disabled="!activeSession?.connected"
         @click="addCommand"
       >
         + add

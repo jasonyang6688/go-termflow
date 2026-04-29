@@ -58,6 +58,12 @@ export async function closeSession(id: string) {
   }
 }
 
+export function markSessionClosed(id: string) {
+  sessions.value = sessions.value.map(session =>
+    session.id === id ? { ...session, connected: false } : session
+  )
+}
+
 function isWailsBridgeMissing(e: unknown) {
   const message = e instanceof Error ? e.message : String(e)
   return message.includes("Cannot read properties of undefined") ||
