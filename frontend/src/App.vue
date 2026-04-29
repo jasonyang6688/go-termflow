@@ -26,16 +26,19 @@ async function handleConnect(conn: Connection) {
   <AppShell>
     <template #sidebar="{ panel }">
       <ConnectionSidebar
-        v-if="panel === 'connections'"
+        v-show="panel === 'connections'"
         @connect="handleConnect"
       />
-      <ModuleSidebar v-else :panel="panel" />
+      <ModuleSidebar v-show="panel !== 'connections'" :panel="panel" />
     </template>
     <template #main="{ panel }">
-      <FileWorkbench v-if="panel === 'files'" />
-      <CommandWorkbench v-else-if="panel === 'commands'" />
-      <SettingsWorkbench v-else-if="panel === 'settings'" />
-      <TerminalArea v-else :active-panel="panel" />
+      <FileWorkbench v-show="panel === 'files'" />
+      <CommandWorkbench v-show="panel === 'commands'" />
+      <SettingsWorkbench v-show="panel === 'settings'" />
+      <TerminalArea
+        v-show="panel === 'connections' || panel === 'monitor'"
+        :active-panel="panel === 'monitor' ? 'monitor' : 'connections'"
+      />
     </template>
   </AppShell>
 </template>

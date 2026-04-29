@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import ConnectionItem from './ConnectionItem.vue'
-import { addConnection, detectedHosts, fetchConnections, groupedConnections, loading, removeConnection } from '../../stores/connections'
+import { addConnection, detectedHosts, ensureConnectionsLoaded, groupedConnections, loading, removeConnection } from '../../stores/connections'
 import type { Connection } from '../../stores/connections'
 
-onMounted(fetchConnections)
+onMounted(ensureConnectionsLoaded)
 
 const emit = defineEmits<{ (e: 'connect', c: Connection): void }>()
 const search = ref('')

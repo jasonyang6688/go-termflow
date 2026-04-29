@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { fetchQuickCommands, quickCommands } from '../../stores/quickCommands'
+import { computed, onMounted, ref } from 'vue'
+import { ensureQuickCommandsLoaded, quickCommands, reorderQuickCommands } from '../../stores/quickCommands'
+import type { QuickCommand } from '../../stores/quickCommands'
 import type { Session } from '../../stores/sessions'
 import { sendCommandToSession } from '../../stores/terminalBridge'
 import { preferences } from '../../stores/uiSettings'
 import { requestCommandCreate } from '../../stores/workspace'
 
 const props = defineProps<{ activeSession: Session | null }>()
+const draggingCommandId = ref<number | null>(null)
+const dragOverCommandId = ref<number | null>(null)
+const didDrag = ref(false)
 
-onMounted(fetchQuickCommands)
+onMounted(ensureQuickCommandsLoaded)
 
-const visibleCommands = computed(() => quickCommands.value.filter(cmd =>
-  cmd.connectionId == null || cmd.connectionId === props.activeSession?.connectionId
-))
+const visibleCommands = computed(() => quickCommands.value
+  .filter(cmd => cmd.connectionId == null || cmd.connectionId === props.activeSession?.connectionId)
+  .slice()
+  .sort((a, b) => a.sortOrder - b.sortOrder)
+)
 
 function runCommand(cmd: string) {
+  if (didDrag.value) {
+    didDrag.value = false
+    return
+  }
   if (preferences.value.dangerousCommandConfirm && isDangerousCommand(cmd) && !window.confirm(`Run "${cmd}"?`)) {
     return
   }
@@ -30,6 +40,46 @@ function addCommand() {
   if (!props.activeSession) return
   requestCommandCreate(props.activeSession.connectionId)
 }
+
+function startDrag(event: DragEvent, command: QuickCommand) {
+  draggingCommandId.value = command.id
+  dragOverCommandId.value = command.id
+  event.dataTransfer?.setData('text/plain', String(command.id))
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function overCommand(event: DragEvent, command: QuickCommand) {
+  if (draggingCommandId.value == null || draggingCommandId.value === command.id) return
+  event.preventDefault()
+  dragOverCommandId.value = command.id
+}
+
+async function dropCommand(event: DragEvent, target: QuickCommand) {
+  event.preventDefault()
+  const sourceId = draggingCommandId.value
+  resetDrag()
+  if (sourceId == null || sourceId === target.id) return
+
+  didDrag.value = true
+  const next = visibleCommands.value.slice()
+  const sourceIndex = next.findIndex(command => command.id === sourceId)
+  const targetIndex = next.findIndex(command => command.id === target.id)
+  if (sourceIndex < 0 || targetIndex < 0) return
+
+  const [moved] = next.splice(sourceIndex, 1)
+  next.splice(targetIndex, 0, moved)
+  await reorderQuickCommands(next)
+  window.setTimeout(() => {
+    didDrag.value = false
+  }, 0)
+}
+
+function resetDrag() {
+  draggingCommandId.value = null
+  dragOverCommandId.value = null
+}
 </script>
 
 <template>
@@ -44,9 +94,21 @@ function addCommand() {
       <button
         v-for="cmd in visibleCommands"
         :key="cmd.id"
-        :class="['pill', { primary: cmd.sortOrder === 0 }]"
+        :class="[
+          'pill',
+          {
+            primary: cmd.sortOrder === 0,
+            dragging: draggingCommandId === cmd.id,
+            'drag-over': dragOverCommandId === cmd.id && draggingCommandId !== cmd.id,
+          },
+        ]"
         :title="cmd.command"
+        draggable="true"
         :disabled="!activeSession"
+        @dragstart="startDrag($event, cmd)"
+        @dragover="overCommand($event, cmd)"
+        @drop="dropCommand($event, cmd)"
+        @dragend="resetDrag"
         @click="runCommand(cmd.command)"
       >
         {{ cmd.label }}
@@ -118,6 +180,17 @@ function addCommand() {
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.1s, border-color 0.1s;
+}
+.pill[draggable="true"] {
+  cursor: grab;
+}
+.pill.dragging {
+  opacity: 0.48;
+}
+.pill.drag-over {
+  background: var(--highlight);
+  outline: 2px dashed var(--ink);
+  outline-offset: 2px;
 }
 .pill:hover {
   background: var(--highlight);

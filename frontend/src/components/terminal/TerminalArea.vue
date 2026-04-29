@@ -8,6 +8,7 @@ import SftpDrawer from './SftpDrawer.vue'
 import MonitorPanel from './MonitorPanel.vue'
 import { terminalStyle } from '../../stores/uiSettings'
 import { filePathRequest, monitorOpen, openFiles, openMonitor, sftpOpen } from '../../stores/workspace'
+import { sendCommandToSession } from '../../stores/terminalBridge'
 
 const props = defineProps<{ activePanel?: string }>()
 
@@ -16,6 +17,7 @@ const activeSession = computed(() =>
 )
 
 const splitMode = ref(false)
+const commandDraft = ref('')
 const monitorMode = computed(() => props.activePanel === 'monitor')
 
 const visibleSessionIds = computed(() => {
@@ -35,6 +37,14 @@ watch(() => props.activePanel, (panel) => {
     openMonitor()
   }
 })
+
+function submitCommandDraft() {
+  const command = commandDraft.value.trim()
+  if (!command || !activeSession.value) return
+  if (sendCommandToSession(activeSession.value.id, command, true)) {
+    commandDraft.value = ''
+  }
+}
 </script>
 
 <template>
@@ -89,7 +99,7 @@ watch(() => props.activePanel, (panel) => {
       />
       <!-- Terminal panels (mounted, shown/hidden) -->
       <div
-        v-else
+        v-show="!monitorMode"
         :class="['terminal-wrap', { split: splitMode && visibleSessionIds.length > 1 }]"
       >
         <XTerminal
@@ -127,7 +137,17 @@ watch(() => props.activePanel, (panel) => {
     </div>
 
     <!-- Quick command pills -->
-    <QuickCommandBar :active-session="activeSession" />
+    <form v-if="!monitorMode && activeSession" class="command-entry" @submit.prevent="submitCommandDraft">
+      <span class="entry-prefix">{{ activeSession.connectionName }}</span>
+      <input
+        v-model="commandDraft"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="Paste or type a command, edit it, then press Enter"
+      />
+      <button type="submit" :disabled="!commandDraft.trim()">Run</button>
+    </form>
+    <QuickCommandBar v-if="!monitorMode" :active-session="activeSession" />
 
     <!-- Status bar -->
     <div class="status-bar">
@@ -249,6 +269,59 @@ watch(() => props.activePanel, (panel) => {
   font-size: 48px;
   color: rgba(250,248,244,0.08);
   margin-bottom: 8px;
+}
+.command-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1.2px solid var(--faint);
+  background: var(--paper-tabbar);
+  flex-shrink: 0;
+}
+.entry-prefix {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pencil);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.command-entry input {
+  min-width: 0;
+  height: 30px;
+  border: 1.2px dashed var(--pencil);
+  border-radius: var(--radius);
+  background: rgba(250, 248, 244, 0.62);
+  color: var(--ink);
+  outline: none;
+  padding: 0 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.command-entry input:focus {
+  border-color: var(--ink);
+  background: var(--paper);
+}
+.command-entry button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1.2px solid var(--ink);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+}
+.command-entry button:hover:not(:disabled) {
+  background: var(--highlight);
+}
+.command-entry button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .status-bar {
   height: var(--status-h);

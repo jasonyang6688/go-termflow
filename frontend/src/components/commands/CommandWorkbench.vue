@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { deleteQuickCommand, quickCommands, fetchQuickCommands, saveQuickCommand, saveQuickCommands } from '../../stores/quickCommands'
+import { deleteQuickCommand, quickCommands, ensureQuickCommandsLoaded, saveQuickCommand, saveQuickCommands } from '../../stores/quickCommands'
 import type { QuickCommand } from '../../stores/quickCommands'
-import { connections, fetchConnections } from '../../stores/connections'
+import { connections, ensureConnectionsLoaded } from '../../stores/connections'
 import { commandCreateRequest, commandScope } from '../../stores/workspace'
 
 onMounted(() => {
-  fetchQuickCommands()
-  fetchConnections()
+  ensureQuickCommandsLoaded()
+  ensureConnectionsLoaded()
 })
 
 watch(commandCreateRequest, request => {

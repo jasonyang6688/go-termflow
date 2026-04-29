@@ -10,8 +10,27 @@ const connections = ref<Connection[]>([])
 const detectedHosts = ref<Connection[]>([])
 const loading = ref(false)
 let localId = -1
+let loaded = false
+let loadingPromise: Promise<void> | null = null
 
-export async function fetchConnections() {
+export async function fetchConnections(options: { force?: boolean } = {}) {
+  if (loadingPromise && !options.force) {
+    return loadingPromise
+  }
+
+  if (loaded && !options.force) {
+    return
+  }
+
+  loadingPromise = loadConnections()
+  await loadingPromise
+}
+
+export async function ensureConnectionsLoaded() {
+  await fetchConnections()
+}
+
+async function loadConnections() {
   loading.value = true
   try {
     const { DetectLocalHosts, ListConnections } = await import('../../wailsjs/go/main/App')
@@ -21,6 +40,7 @@ export async function fetchConnections() {
     ])
     connections.value = result ?? []
     detectedHosts.value = filterUnsavedDetectedHosts(detected ?? [], connections.value)
+    loaded = true
   } catch (e) {
     console.warn('fetchConnections failed (dev mode?):', e)
     connections.value = []
@@ -39,8 +59,10 @@ export async function fetchConnections() {
         groupName: 'Local',
       },
     ]
+    loaded = true
   } finally {
     loading.value = false
+    loadingPromise = null
   }
 }
 
@@ -48,7 +70,7 @@ export async function addConnection(c: Connection) {
   try {
     const { SaveConnection } = await import('../../wailsjs/go/main/App')
     await SaveConnection(c)
-    await fetchConnections()
+    await fetchConnections({ force: true })
   } catch (e) {
     console.warn('addConnection failed (dev mode?):', e)
     connections.value = [

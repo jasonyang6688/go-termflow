@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css'
 
 const props = defineProps<{ sessionId: string }>()
 const container = ref<HTMLElement>()
+const contextMenu = ref({ open: false, x: 0, y: 0 })
 let term: Terminal
 let fit: FitAddon
 let ro: ResizeObserver
@@ -162,8 +163,7 @@ function handleTerminalKey(event: KeyboardEvent) {
   }
 
   if (ctrlOrMeta && key === 'v') {
-    pasteClipboard()
-    return false
+    return true
   }
 
   if (ctrlOrMeta && event.shiftKey && key === 'c') {
@@ -175,8 +175,7 @@ function handleTerminalKey(event: KeyboardEvent) {
   }
 
   if (ctrlOrMeta && event.shiftKey && key === 'v') {
-    pasteClipboard()
-    return false
+    return true
   }
 
   return true
@@ -205,6 +204,32 @@ async function pasteClipboard() {
   }
 }
 
+async function copySelectionFromMenu() {
+  const selectedText = term?.getSelection()
+  if (selectedText) {
+    await copyText(selectedText)
+  }
+  closeContextMenu()
+}
+
+async function pasteFromMenu() {
+  await pasteClipboard()
+  closeContextMenu()
+  focusTerminal()
+}
+
+function openContextMenu(event: MouseEvent) {
+  contextMenu.value = {
+    open: true,
+    x: event.offsetX,
+    y: event.offsetY,
+  }
+}
+
+function closeContextMenu() {
+  contextMenu.value.open = false
+}
+
 function decodeBase64(encoded: string) {
   const binary = atob(encoded)
   const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
@@ -216,12 +241,29 @@ function formatError(e: unknown) {
 }
 
 function focusTerminal() {
+  closeContextMenu()
   term?.focus()
 }
 </script>
 
 <template>
-  <div ref="container" class="xterm-wrap" @mousedown="focusTerminal" />
+  <div
+    ref="container"
+    class="xterm-wrap"
+    @mousedown="focusTerminal"
+    @contextmenu.prevent.stop="openContextMenu"
+  >
+    <div
+      v-if="contextMenu.open"
+      class="terminal-menu"
+      :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+      @mousedown.stop
+      @click.stop
+    >
+      <button type="button" @click="copySelectionFromMenu">Copy</button>
+      <button type="button" @click="pasteFromMenu">Paste</button>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -235,6 +277,33 @@ function focusTerminal() {
     var(--terminal-bg-image, none);
   background-size: cover;
   background-position: center;
+}
+.terminal-menu {
+  position: absolute;
+  z-index: 12;
+  min-width: 116px;
+  padding: 5px;
+  border: 1px solid rgba(250, 248, 244, 0.24);
+  border-radius: 6px;
+  background: rgba(28, 27, 25, 0.96);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}
+.terminal-menu button {
+  display: block;
+  width: 100%;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--terminal-fg);
+  cursor: pointer;
+  text-align: left;
+  padding: 0 9px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.terminal-menu button:hover {
+  background: rgba(250, 248, 244, 0.12);
 }
 .xterm-wrap :deep(.xterm) {
   height: 100%;

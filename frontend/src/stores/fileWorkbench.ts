@@ -1,6 +1,8 @@
 import { computed, ref } from 'vue'
-import { connections, fetchConnections } from './connections'
+import { connections } from './connections'
 import type { Connection } from './connections'
+
+export { ensureConnectionsLoaded } from './connections'
 
 export const selectedFileConnectionId = ref<number | null>(null)
 export const fileSessionIds = ref<Record<number, string>>({})
@@ -8,12 +10,6 @@ export const fileSessionIds = ref<Record<number, string>>({})
 export const selectedFileConnection = computed(() =>
   connections.value.find(conn => conn.id === selectedFileConnectionId.value) ?? null
 )
-
-export async function ensureConnectionsLoaded() {
-  if (connections.value.length === 0) {
-    await fetchConnections()
-  }
-}
 
 export function selectFileConnection(conn: Connection) {
   selectedFileConnectionId.value = conn.id

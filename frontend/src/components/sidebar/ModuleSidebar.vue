@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { quickCommands, fetchQuickCommands } from '../../stores/quickCommands'
+import { quickCommands, ensureQuickCommandsLoaded } from '../../stores/quickCommands'
 import { groupedConnections, loading as connectionsLoading } from '../../stores/connections'
 import type { Connection } from '../../stores/connections'
 import { activeSessionId, openSession, sessions } from '../../stores/sessions'
@@ -9,7 +9,7 @@ import { commandScope, openMonitor, selectCommandScope, selectSettingsSection, s
 
 const props = defineProps<{ panel: string }>()
 
-fetchQuickCommands()
+ensureQuickCommandsLoaded()
 onMounted(ensureConnectionsLoaded)
 
 const globalCommandCount = computed(() => quickCommands.value.filter(cmd => cmd.connectionId == null).length)
