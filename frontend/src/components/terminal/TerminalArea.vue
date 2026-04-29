@@ -18,6 +18,7 @@ const activeSession = computed(() =>
 
 const splitMode = ref(false)
 const commandDraft = ref('')
+const quickPanelHeight = ref(116)
 const monitorMode = computed(() => props.activePanel === 'monitor')
 
 const visibleSessionIds = computed(() => {
@@ -44,6 +45,29 @@ function submitCommandDraft() {
   if (sendCommandToSession(activeSession.value.id, command, true)) {
     commandDraft.value = ''
   }
+}
+
+function startQuickPanelResize(event: PointerEvent) {
+  event.preventDefault()
+  const startY = event.clientY
+  const startHeight = quickPanelHeight.value
+
+  function resize(moveEvent: PointerEvent) {
+    const delta = startY - moveEvent.clientY
+    quickPanelHeight.value = Math.min(260, Math.max(82, startHeight + delta))
+  }
+
+  function stopResize() {
+    window.removeEventListener('pointermove', resize)
+    window.removeEventListener('pointerup', stopResize)
+  }
+
+  window.addEventListener('pointermove', resize)
+  window.addEventListener('pointerup', stopResize)
+}
+
+function resetQuickPanelHeight() {
+  quickPanelHeight.value = 116
 }
 </script>
 
@@ -137,18 +161,32 @@ function submitCommandDraft() {
     </div>
 
     <!-- Quick command pills -->
-    <form v-if="!monitorMode && activeSession" class="command-entry" @submit.prevent="submitCommandDraft">
-      <span class="entry-prefix">{{ activeSession.connectionName }}</span>
-      <input
-        v-model="commandDraft"
-        :disabled="!activeSession.connected"
-        spellcheck="false"
-        autocomplete="off"
-        :placeholder="activeSession.connected ? 'Paste or type a command, edit it, then press Enter' : 'Session is closed'"
-      />
-      <button type="submit" :disabled="!activeSession.connected || !commandDraft.trim()">Run</button>
-    </form>
-    <QuickCommandBar v-if="!monitorMode" :active-session="activeSession" />
+    <section
+      v-if="!monitorMode"
+      class="quick-panel"
+      :style="{ height: `${quickPanelHeight}px` }"
+    >
+      <div
+        class="quick-panel-resizer"
+        title="Drag to resize quick commands"
+        @pointerdown="startQuickPanelResize"
+        @dblclick="resetQuickPanelHeight"
+      >
+        <span />
+      </div>
+      <form v-if="activeSession" class="command-entry" @submit.prevent="submitCommandDraft">
+        <span class="entry-prefix">{{ activeSession.connectionName }}</span>
+        <input
+          v-model="commandDraft"
+          :disabled="!activeSession.connected"
+          spellcheck="false"
+          autocomplete="off"
+          :placeholder="activeSession.connected ? 'Paste or type a command, edit it, then press Enter' : 'Session is closed'"
+        />
+        <button type="submit" :disabled="!activeSession.connected || !commandDraft.trim()">Run</button>
+      </form>
+      <QuickCommandBar :active-session="activeSession" />
+    </section>
 
     <!-- Status bar -->
     <div class="status-bar">
@@ -271,13 +309,40 @@ function submitCommandDraft() {
   color: rgba(250,248,244,0.08);
   margin-bottom: 8px;
 }
+.quick-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 82px;
+  max-height: 260px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--paper-tabbar);
+  border-top: 1.2px solid var(--faint);
+}
+.quick-panel-resizer {
+  height: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  flex-shrink: 0;
+}
+.quick-panel-resizer span {
+  width: 48px;
+  height: 3px;
+  border-radius: 6px;
+  background: var(--faint);
+}
+.quick-panel-resizer:hover span {
+  background: var(--pencil);
+}
 .command-entry {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 1.2px solid var(--faint);
+  border-top: none;
   background: var(--paper-tabbar);
   flex-shrink: 0;
 }

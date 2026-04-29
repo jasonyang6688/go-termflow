@@ -131,7 +131,9 @@ function resetDrag() {
   background: var(--paper-tabbar);
   border-top: 1.2px solid var(--faint);
   padding: 8px 14px 10px;
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 .bar-header {
   display: flex;

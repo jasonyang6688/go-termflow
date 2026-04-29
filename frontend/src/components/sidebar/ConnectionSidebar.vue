@@ -46,6 +46,10 @@ const filteredGroups = computed(() => {
   return groups
 })
 
+const groupOptions = computed(() =>
+  Object.keys(groupedConnections.value).sort((a, b) => a.localeCompare(b))
+)
+
 function resetDraft() {
   draft.value = {
     name: '',
@@ -213,7 +217,14 @@ function connectionAddress(c: Connection) {
         </label>
         <label>
           <span>Group</span>
-          <input v-model="draft.groupName" placeholder="Production" />
+          <input v-model="draft.groupName" list="connection-groups" placeholder="Production" />
+          <datalist id="connection-groups">
+            <option
+              v-for="group in groupOptions"
+              :key="group"
+              :value="group"
+            />
+          </datalist>
         </label>
       </div>
       <label>

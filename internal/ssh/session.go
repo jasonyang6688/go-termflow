@@ -39,7 +39,7 @@ func Connect(id string, p ConnectParams) (*Session, error) {
 		if err != nil {
 			return nil, err
 		}
-		signer, err := gossh.ParsePrivateKey(key)
+		signer, err := parsePrivateKey(key, p.Password)
 		if err != nil {
 			return nil, err
 		}
