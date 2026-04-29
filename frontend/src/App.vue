@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import AppShell from './components/layout/AppShell.vue'
 import ConnectionSidebar from './components/sidebar/ConnectionSidebar.vue'
+import ModuleSidebar from './components/sidebar/ModuleSidebar.vue'
+import CommandWorkbench from './components/commands/CommandWorkbench.vue'
+import FileWorkbench from './components/files/FileWorkbench.vue'
+import SettingsWorkbench from './components/settings/SettingsWorkbench.vue'
 import TerminalArea from './components/terminal/TerminalArea.vue'
 import { openSession } from './stores/sessions'
+import { applySettings } from './stores/uiSettings'
 import type { Connection } from './stores/connections'
+
+applySettings()
 
 async function handleConnect(conn: Connection) {
   try {
@@ -22,12 +29,13 @@ async function handleConnect(conn: Connection) {
         v-if="panel === 'connections'"
         @connect="handleConnect"
       />
-      <div v-else class="wf-label" style="padding:16px;color:var(--pencil)">
-        {{ panel }} panel — coming soon
-      </div>
+      <ModuleSidebar v-else :panel="panel" />
     </template>
-    <template #main>
-      <TerminalArea />
+    <template #main="{ panel }">
+      <FileWorkbench v-if="panel === 'files'" />
+      <CommandWorkbench v-else-if="panel === 'commands'" />
+      <SettingsWorkbench v-else-if="panel === 'settings'" />
+      <TerminalArea v-else :active-panel="panel" />
     </template>
   </AppShell>
 </template>

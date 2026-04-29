@@ -1,6 +1,10 @@
 :root {
   --ink: #2B2A28;
   --paper: #FAF8F4;
+  --paper-rail: #F3EFE6;
+  --paper-sidebar: #FBF8F1;
+  --paper-tabbar: #F6F2E9;
+  --paper-status: #F0ECE2;
   --pencil: #6B6864;
   --faint: #C9C4BA;
   --highlight: oklch(0.92 0.18 95);
@@ -11,8 +15,8 @@
   --terminal-bg: #1C1B19;
   --rail-w: 56px;
   --sidebar-w: 240px;
-  --tab-h: 36px;
-  --pill-h: 34px;
-  --status-h: 24px;
+  --tab-h: 38px;
+  --pill-h: 52px;
+  --status-h: 26px;
   --radius: 6px;
 }

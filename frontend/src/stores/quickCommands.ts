@@ -1,4 +1,5 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import type { Session } from './sessions'
 
 export interface QuickCommand {
   id: number
@@ -9,6 +10,18 @@ export interface QuickCommand {
 }
 
 export const quickCommands = ref<QuickCommand[]>([])
+
+export function commandsForSession(session: Session | null | undefined) {
+  return computed(() => quickCommands.value.filter(cmd =>
+    cmd.connectionId == null || cmd.connectionId === session?.connectionId
+  ))
+}
+
+export function commandsForScope(scope: number | 'global') {
+  return computed(() => quickCommands.value.filter(cmd =>
+    scope === 'global' ? cmd.connectionId == null : cmd.connectionId === scope
+  ))
+}
 
 export async function fetchQuickCommands() {
   try {
@@ -25,4 +38,24 @@ export async function fetchQuickCommands() {
       { id: 4, label: 'git status', command: 'git status', sortOrder: 3 },
     ]
   }
+}
+
+export async function saveQuickCommand(command: QuickCommand) {
+  const { SaveQuickCommand } = await import('../../wailsjs/go/main/App')
+  await SaveQuickCommand(command)
+  await fetchQuickCommands()
+}
+
+export async function saveQuickCommands(commands: QuickCommand[]) {
+  const { SaveQuickCommand } = await import('../../wailsjs/go/main/App')
+  for (const command of commands) {
+    await SaveQuickCommand(command)
+  }
+  await fetchQuickCommands()
+}
+
+export async function deleteQuickCommand(id: number) {
+  const { DeleteQuickCommand } = await import('../../wailsjs/go/main/App')
+  await DeleteQuickCommand(id)
+  await fetchQuickCommands()
 }

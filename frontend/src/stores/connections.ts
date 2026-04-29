@@ -1,29 +1,70 @@
 import { ref, computed } from 'vue'
 import { store } from '../../wailsjs/go/models'
 
-export type Connection = store.Connection
+export type Connection = store.Connection & {
+  kind?: string
+  wslDistro?: string
+}
 
 const connections = ref<Connection[]>([])
+const detectedHosts = ref<Connection[]>([])
 const loading = ref(false)
+let localId = -1
 
 export async function fetchConnections() {
   loading.value = true
   try {
-    const { ListConnections } = await import('../../wailsjs/go/main/App')
-    const result = await ListConnections()
+    const { DetectLocalHosts, ListConnections } = await import('../../wailsjs/go/main/App')
+    const [result, detected] = await Promise.all([
+      ListConnections(),
+      DetectLocalHosts().catch(() => []),
+    ])
     connections.value = result ?? []
+    detectedHosts.value = filterUnsavedDetectedHosts(detected ?? [], connections.value)
   } catch (e) {
     console.warn('fetchConnections failed (dev mode?):', e)
     connections.value = []
+    detectedHosts.value = [
+      {
+        id: 0,
+        name: 'WSL Local',
+        host: '127.0.0.1',
+        port: 22,
+        user: 'wsl-user',
+        password: '',
+        keyPath: '',
+        kind: 'wsl',
+        wslDistro: 'Ubuntu',
+        env: 'dev',
+        groupName: 'Local',
+      },
+    ]
   } finally {
     loading.value = false
   }
 }
 
 export async function addConnection(c: Connection) {
-  const { SaveConnection } = await import('../../wailsjs/go/main/App')
-  await SaveConnection(c)
-  await fetchConnections()
+  try {
+    const { SaveConnection } = await import('../../wailsjs/go/main/App')
+    await SaveConnection(c)
+    await fetchConnections()
+  } catch (e) {
+    console.warn('addConnection failed (dev mode?):', e)
+    connections.value = [
+      ...connections.value,
+      {
+        ...c,
+        id: localId--,
+        port: Number(c.port) || 22,
+        env: c.env || 'dev',
+        groupName: c.groupName || 'Default',
+        keyPath: c.keyPath || '',
+        kind: c.kind || 'ssh',
+        wslDistro: c.wslDistro || '',
+      },
+    ]
+  }
 }
 
 export async function removeConnection(id: number) {
@@ -42,4 +83,13 @@ export const groupedConnections = computed(() => {
   return groups
 })
 
-export { connections, loading }
+function filterUnsavedDetectedHosts(detected: Connection[], saved: Connection[]) {
+  return detected.filter(host => !saved.some(conn =>
+    conn.host === host.host &&
+    conn.port === host.port &&
+    conn.user === host.user &&
+    conn.name === host.name
+  ))
+}
+
+export { connections, detectedHosts, loading }

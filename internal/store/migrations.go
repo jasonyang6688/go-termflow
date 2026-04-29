@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS connections (
 	user        TEXT NOT NULL,
 	password    BLOB,
 	key_path    TEXT,
+	kind        TEXT NOT NULL DEFAULT 'ssh',
+	wsl_distro  TEXT NOT NULL DEFAULT '',
 	env         TEXT NOT NULL DEFAULT 'dev',
 	group_name  TEXT,
 	created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,

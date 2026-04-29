@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-type Panel = 'connections' | 'files' | 'monitor' | 'commands' | 'search' | 'settings'
+type Panel = 'connections' | 'files' | 'monitor' | 'commands' | 'settings'
 
 const active = ref<Panel>('connections')
+const props = defineProps<{ activePanel?: string }>()
 
 const items: { id: Panel; icon: string; title: string }[] = [
-  { id: 'connections', icon: '⬡', title: 'Connections' },
-  { id: 'files',       icon: '⊞', title: 'SFTP Files' },
-  { id: 'monitor',     icon: '◈', title: 'Monitor' },
-  { id: 'commands',    icon: '⚡', title: 'Commands' },
-  { id: 'search',      icon: '⌕', title: 'Search' },
-  { id: 'settings',    icon: '⚙', title: 'Settings' },
+  { id: 'connections', icon: 'C', title: 'Connections' },
+  { id: 'files',       icon: 'F', title: 'Files' },
+  { id: 'monitor',     icon: 'M', title: 'Monitor' },
+  { id: 'commands',    icon: '>', title: 'Commands' },
+  { id: 'settings',    icon: '*', title: 'Settings' },
 ]
 
 const emit = defineEmits<{ (e: 'change', panel: Panel): void }>()
@@ -30,7 +30,7 @@ function select(panel: Panel) {
     <button
       v-for="item in items"
       :key="item.id"
-      :class="['rail-btn', { active: active === item.id }]"
+      :class="['rail-btn', { active: (props.activePanel || active) === item.id }]"
       :title="item.title"
       @click="select(item.id)"
     >
@@ -42,8 +42,8 @@ function select(panel: Panel) {
 <style scoped>
 .rail {
   width: var(--rail-w);
-  background: var(--paper);
-  border-right: 1.5px solid var(--faint);
+  background: var(--paper-rail);
+  border-right: 1.2px solid var(--faint);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -90,5 +90,5 @@ function select(panel: Panel) {
   transition: background 0.1s, color 0.1s;
 }
 .rail-btn:hover { background: var(--highlight); color: var(--ink); }
-.rail-btn.active { background: var(--ink); color: var(--paper); }
+.rail-btn.active { background: var(--paper); color: var(--ink); border: 1.3px solid var(--ink); }
 </style>

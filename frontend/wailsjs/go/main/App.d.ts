@@ -5,12 +5,62 @@ import {main} from '../models';
 
 export function DeleteConnection(arg1:number):Promise<void>;
 
+export function DeleteQuickCommand(arg1:number):Promise<void>;
+
+export function DetectLocalHosts():Promise<Array<store.Connection>>;
+
 export function ListConnections():Promise<Array<store.Connection>>;
 
 export function ListQuickCommands():Promise<Array<store.QuickCommand>>;
+
+export function LocalDelete(arg1:string):Promise<void>;
+
+export function LocalListDir(arg1:string):Promise<main.RemoteListResult>;
+
+export function LocalMkdir(arg1:string,arg2:string):Promise<void>;
+
+export function LocalRename(arg1:string,arg2:string):Promise<void>;
+
+export function RemoteDelete(arg1:string,arg2:string):Promise<void>;
+
+export function RemoteDownloadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function RemoteDownloadToDir(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<main.TransferStartResult>;
+
+export function RemoteListDir(arg1:string,arg2:string):Promise<main.RemoteListResult>;
+
+export function RemoteMetrics(arg1:string):Promise<main.RemoteMetrics>;
+
+export function RemoteMkdir(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function RemoteReadTextFile(arg1:string,arg2:string):Promise<string>;
+
+export function RemoteRename(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function RemoteStartDownload(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.TransferStartResult>;
+
+export function RemoteStartUpload(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.TransferStartResult>;
+
+export function RemoteUploadFile(arg1:string,arg2:string):Promise<main.RemoteFile>;
+
+export function RemoteUploadLocalFile(arg1:string,arg2:string,arg3:string):Promise<main.TransferStartResult>;
+
+export function RemoteWriteTextFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function RemoteWriteUploadChunk(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function SSHConnect(arg1:number):Promise<main.ConnectResult>;
 
 export function SSHDisconnect(arg1:string):Promise<void>;
 
+export function SSHResize(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function SSHStart(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function SSHWrite(arg1:string,arg2:string):Promise<void>;
+
 export function SaveConnection(arg1:store.Connection):Promise<number>;
+
+export function SaveQuickCommand(arg1:store.QuickCommand):Promise<void>;
+
+export function SelectPrivateKeyPath():Promise<string>;

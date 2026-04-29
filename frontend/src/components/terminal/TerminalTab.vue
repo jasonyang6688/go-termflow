@@ -30,31 +30,38 @@ const envColors: Record<string, string> = {
   padding: 0 12px;
   height: var(--tab-h);
   border: none;
-  border-right: 1px solid rgba(250,248,244,0.08);
-  background: rgba(250,248,244,0.04);
+  border-right: 1.2px solid var(--faint);
+  border-bottom: 1.2px solid var(--faint);
+  background: transparent;
   color: var(--pencil);
   cursor: pointer;
   white-space: nowrap;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-family: 'Caveat', cursive;
+  font-size: 15px;
   transition: background 0.1s;
+  margin-bottom: -1px;
+  border-radius: 6px 6px 0 0;
 }
-.tab:hover { background: rgba(250,248,244,0.08); }
+.tab:hover { background: rgba(43,42,40,0.05); color: var(--ink); }
 .tab.active {
-  background: var(--terminal-bg);
-  color: var(--paper);
-  border-bottom: 2px solid var(--accent);
+  background: var(--paper);
+  color: var(--ink);
+  border: 1.2px solid var(--ink);
+  border-bottom: 2px solid var(--paper);
+  font-weight: 600;
 }
 .tab-dot {
-  width: 7px; height: 7px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 .tab-close {
-  margin-left: 6px;
-  opacity: 0.4;
-  font-size: 15px;
+  margin-left: 4px;
+  opacity: 0.35;
+  font-size: 16px;
   line-height: 1;
+  font-family: 'JetBrains Mono', monospace;
 }
 .tab-close:hover { opacity: 1; }
 </style>

@@ -1,12 +1,44 @@
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
 import { sessions, activeSessionId, closeSession } from '../../stores/sessions'
 import TerminalTab from './TerminalTab.vue'
 import XTerminal from './XTerminal.vue'
 import QuickCommandBar from '../commands/QuickCommandBar.vue'
+import SftpDrawer from './SftpDrawer.vue'
+import MonitorPanel from './MonitorPanel.vue'
+import { terminalStyle } from '../../stores/uiSettings'
+import { filePathRequest, monitorOpen, openFiles, openMonitor, sftpOpen } from '../../stores/workspace'
+
+const props = defineProps<{ activePanel?: string }>()
+
+const activeSession = computed(() =>
+  sessions.value.find(s => s.id === activeSessionId.value) ?? null
+)
+
+const splitMode = ref(false)
+const monitorMode = computed(() => props.activePanel === 'monitor')
+
+const visibleSessionIds = computed(() => {
+  if (!splitMode.value || sessions.value.length <= 1) {
+    return activeSessionId.value ? [activeSessionId.value] : []
+  }
+  const active = activeSessionId.value ?? sessions.value[0]?.id
+  const secondary = sessions.value.find(s => s.id !== active)?.id
+  return [active, secondary].filter(Boolean) as string[]
+})
+
+watch(() => props.activePanel, (panel) => {
+  if (panel === 'files') {
+    openFiles()
+  }
+  if (panel === 'monitor') {
+    openMonitor()
+  }
+})
 </script>
 
 <template>
-  <div class="term-area">
+  <div class="term-area" :style="terminalStyle">
     <!-- Tab bar -->
     <div class="tab-bar">
       <TerminalTab
@@ -21,40 +53,99 @@ import QuickCommandBar from '../commands/QuickCommandBar.vue'
         Double-click a connection to open a session
       </div>
       <div class="tab-spacer" />
-    </div>
-
-    <!-- Terminal panels (mounted, shown/hidden) -->
-    <div class="terminal-wrap">
-      <XTerminal
-        v-for="s in sessions"
-        v-show="s.id === activeSessionId"
-        :key="s.id"
-        :session-id="s.id"
-      />
-      <div v-if="sessions.length === 0" class="empty-terminal">
-        <div class="empty-inner">
-          <div class="empty-icon">⬡</div>
-          <div class="wf-label" style="font-size:18px;font-weight:600;color:var(--pencil)">
-            Welcome to TermFlow
-          </div>
-          <div class="wf-label" style="font-size:14px;margin-top:8px;color:var(--faint)">
-            Select a connection from the sidebar to begin
-          </div>
-        </div>
+      <!-- Right-side tab bar actions -->
+      <div class="tab-actions">
+        <button
+          :class="['tab-action-btn', { active: splitMode }]"
+          title="Split terminals"
+          :disabled="sessions.length < 2"
+          @click="splitMode = !splitMode"
+        >
+          ||
+        </button>
+        <button
+          :class="['tab-action-btn', { active: sftpOpen }]"
+          title="Remote files"
+          @click="sftpOpen = !sftpOpen"
+        >
+          Files
+        </button>
+        <button
+          :class="['tab-action-btn', { active: monitorOpen }]"
+          title="Remote monitor"
+          @click="monitorOpen = !monitorOpen"
+        >
+          CPU
+        </button>
       </div>
     </div>
 
+    <div class="workspace">
+      <MonitorPanel
+        v-if="monitorMode"
+        mode="dashboard"
+        :session-id="activeSession?.id ?? null"
+        :session-name="activeSession?.connectionName"
+      />
+      <!-- Terminal panels (mounted, shown/hidden) -->
+      <div
+        v-else
+        :class="['terminal-wrap', { split: splitMode && visibleSessionIds.length > 1 }]"
+      >
+        <XTerminal
+          v-for="s in sessions"
+          v-show="visibleSessionIds.includes(s.id)"
+          :key="s.id"
+          class="terminal-pane"
+          :session-id="s.id"
+        />
+        <div v-if="sessions.length === 0" class="empty-terminal">
+          <div class="empty-inner">
+            <div class="empty-icon">[]</div>
+            <div class="wf-label" style="font-size:18px;font-weight:600;color:rgba(250,248,244,0.4)">
+              Welcome to TermFlow
+            </div>
+            <div class="wf-label" style="font-size:13px;margin-top:8px;color:rgba(250,248,244,0.2)">
+              Select a connection from the sidebar to begin
+            </div>
+          </div>
+        </div>
+      </div>
+      <SftpDrawer
+        v-if="sftpOpen"
+        :session-id="activeSession?.id ?? null"
+        :session-name="activeSession?.connectionName"
+        :path-request="filePathRequest"
+        @close="sftpOpen = false"
+      />
+      <MonitorPanel
+        v-if="monitorOpen && !monitorMode"
+        :session-id="activeSession?.id ?? null"
+        :session-name="activeSession?.connectionName"
+        @close="monitorOpen = false"
+      />
+    </div>
+
     <!-- Quick command pills -->
-    <QuickCommandBar />
+    <QuickCommandBar :active-session="activeSession" />
 
     <!-- Status bar -->
     <div class="status-bar">
-      <span style="color:var(--pencil);font-size:11px">
-        TermFlow
-      </span>
-      <span style="margin-left:auto;color:var(--pencil);font-size:11px">
-        {{ sessions.length }} session{{ sessions.length !== 1 ? 's' : '' }}
-      </span>
+      <template v-if="activeSession">
+        <span class="env-dot" :class="`env-${activeSession.env}`" />
+        <span class="status-text">connected</span>
+        <span class="status-sep">/</span>
+        <span class="status-text">{{ activeSession.connectionName }}</span>
+        <div class="status-spacer" />
+        <span class="status-text">heartbeat 60s</span>
+        <span class="status-sep">/</span>
+        <span class="status-text">utf-8</span>
+      </template>
+      <template v-else>
+        <span class="status-text">TermFlow</span>
+        <div class="status-spacer" />
+        <span class="status-text">{{ sessions.length }} session{{ sessions.length !== 1 ? 's' : '' }}</span>
+      </template>
     </div>
   </div>
 </template>
@@ -69,8 +160,8 @@ import QuickCommandBar from '../commands/QuickCommandBar.vue'
 .tab-bar {
   display: flex;
   height: var(--tab-h);
-  background: rgba(43,42,40,0.95);
-  border-bottom: 1px solid rgba(250,248,244,0.08);
+  background: var(--paper-tabbar);
+  border-bottom: 1.2px solid var(--faint);
   overflow-x: auto;
   flex-shrink: 0;
   align-items: stretch;
@@ -80,16 +171,67 @@ import QuickCommandBar from '../commands/QuickCommandBar.vue'
   align-items: center;
   padding: 0 16px;
   color: var(--pencil);
-  font-size: 12px;
-  opacity: 0.6;
+  font-size: 13px;
 }
 .tab-spacer { flex: 1; }
+.tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+.tab-action-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--pencil);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tab-action-btn:hover {
+  background: rgba(43,42,40,0.06);
+  color: var(--ink);
+}
+.tab-action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.tab-action-btn.active {
+  background: var(--highlight);
+  color: var(--ink);
+  border: 1.2px solid var(--ink);
+}
+.workspace {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
 .terminal-wrap {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  position: relative;
+  background: var(--terminal-bg);
+}
+.terminal-wrap.split {
+  flex-direction: row;
+  gap: 1px;
+  background: var(--faint);
+}
+.terminal-wrap.split .terminal-pane {
+  min-width: 0;
+  flex: 1;
+  background: var(--terminal-bg);
 }
 .empty-terminal {
   flex: 1;
@@ -105,16 +247,37 @@ import QuickCommandBar from '../commands/QuickCommandBar.vue'
 }
 .empty-icon {
   font-size: 48px;
-  color: rgba(250,248,244,0.1);
+  color: rgba(250,248,244,0.08);
   margin-bottom: 8px;
 }
 .status-bar {
   height: var(--status-h);
-  background: rgba(43,42,40,0.95);
-  border-top: 1px solid rgba(250,248,244,0.06);
+  background: var(--paper-status);
+  border-top: 1.2px solid var(--faint);
   display: flex;
   align-items: center;
   padding: 0 12px;
+  gap: 8px;
   flex-shrink: 0;
 }
+.env-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.env-prod { background: var(--env-prod); }
+.env-stg  { background: var(--env-stg); }
+.env-dev  { background: var(--env-dev); }
+.status-text {
+  font-family: 'Caveat', cursive;
+  font-size: 13px;
+  color: var(--pencil);
+}
+.status-sep {
+  font-family: 'Caveat', cursive;
+  font-size: 13px;
+  color: var(--faint);
+}
+.status-spacer { flex: 1; }
 </style>

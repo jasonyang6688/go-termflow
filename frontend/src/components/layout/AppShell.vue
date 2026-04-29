@@ -1,18 +1,25 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import ActivityRail from './ActivityRail.vue'
+import { activePanelRequest } from '../../stores/workspace'
 
 const activePanel = ref('connections')
+
+watch(activePanelRequest, request => {
+  if (request?.panel) {
+    activePanel.value = request.panel
+  }
+})
 </script>
 
 <template>
   <div class="shell">
-    <ActivityRail @change="activePanel = $event" />
+    <ActivityRail :active-panel="activePanel" @change="activePanel = $event" />
     <aside class="sidebar">
       <slot name="sidebar" :panel="activePanel" />
     </aside>
     <main class="main-area">
-      <slot name="main" />
+      <slot name="main" :panel="activePanel" />
     </main>
   </div>
 </template>
@@ -26,8 +33,8 @@ const activePanel = ref('connections')
 }
 .sidebar {
   width: var(--sidebar-w);
-  background: var(--paper);
-  border-right: 1.5px solid var(--faint);
+  background: var(--paper-sidebar);
+  border-right: 1.2px solid var(--faint);
   display: flex;
   flex-direction: column;
   overflow: hidden;
