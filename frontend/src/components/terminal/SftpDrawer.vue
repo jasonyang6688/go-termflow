@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
+import { registerFileDropTarget } from '../../stores/fileDrops'
 
 const props = defineProps<{
   sessionId: string | null
@@ -20,6 +21,7 @@ interface RemoteFile {
 interface SessionFileState {
   path: string
   pathDraft: string
+  search: string
   files: RemoteFile[]
   selectedPath: string
 }
@@ -39,9 +41,11 @@ const menu = ref<{ open: boolean; x: number; y: number; file: RemoteFile | null 
 const loading = ref(false)
 const error = ref('')
 const dragging = ref(false)
+const drawerEl = ref<HTMLElement | null>(null)
 const drawerWidth = ref(loadDrawerWidth())
 const resizing = ref(false)
 let removeTransferListener: (() => void) | undefined
+let removeFileDropTarget: (() => void) | undefined
 let startX = 0
 let startWidth = 0
 
@@ -82,11 +86,22 @@ function currentState() {
     states.value[key] = {
       path: '~',
       pathDraft: '~',
+      search: '',
       files: [],
       selectedPath: '',
     }
   }
   return states.value[key]
+}
+
+function visibleFiles() {
+  const state = currentState()
+  const query = state.search.trim().toLowerCase()
+  if (!query) return state.files
+  return state.files.filter(file =>
+    file.name.toLowerCase().includes(query) ||
+    file.path.toLowerCase().includes(query)
+  )
 }
 
 function selectedFile() {
@@ -107,6 +122,32 @@ interface TransferProgress {
   targetPath?: string
 }
 
+interface BrowserUploadFile {
+  file: File
+  path: string
+}
+
+interface BrowserFileSystemEntry {
+  isFile: boolean
+  isDirectory: boolean
+  name: string
+  fullPath: string
+}
+
+interface BrowserFileSystemFileEntry extends BrowserFileSystemEntry {
+  file(success: (file: File) => void, error?: (error: DOMException) => void): void
+}
+
+interface BrowserFileSystemDirectoryEntry extends BrowserFileSystemEntry {
+  createReader(): {
+    readEntries(success: (entries: BrowserFileSystemEntry[]) => void, error?: (error: DOMException) => void): void
+  }
+}
+
+interface BrowserDataTransferItem extends DataTransferItem {
+  webkitGetAsEntry?: () => BrowserFileSystemEntry | null
+}
+
 onMounted(() => {
   removeTransferListener = EventsOn('transfer:progress', (progress: TransferProgress) => {
     const index = transfers.value.findIndex(t => t.id === progress.id)
@@ -119,9 +160,17 @@ onMounted(() => {
       load()
     }
   })
+  removeFileDropTarget = registerFileDropTarget({
+    element: () => drawerEl.value,
+    enabled: () => Boolean(props.sessionId),
+    onDrop: paths => paths.forEach(path => uploadLocalPath(path)),
+  })
   load()
 })
-onUnmounted(() => removeTransferListener?.())
+onUnmounted(() => {
+  removeTransferListener?.()
+  removeFileDropTarget?.()
+})
 watch(() => props.sessionId, () => {
   const state = currentState()
   load(state.path)
@@ -200,39 +249,64 @@ async function upload() {
   input.click()
 }
 
-async function uploadFile(file: File) {
+async function uploadFile(file: File, relativePath = file.name) {
   if (!props.sessionId) return
+  const uploadPath = normalizeBrowserUploadPath(relativePath || file.name)
   const localId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`
   upsertTransfer({
     id: localId,
-    name: file.name,
+    name: uploadPath,
     kind: 'upload',
     written: 0,
     total: file.size,
     percent: 0,
     status: 'queued',
-    targetPath: `${currentState().path.replace(/\/$/, '')}/${file.name}`,
+    targetPath: `${currentState().path.replace(/\/$/, '')}/${uploadPath}`,
   })
   error.value = ''
   try {
-    const { RemoteStartUpload, RemoteWriteUploadChunk } = await import('../../../wailsjs/go/main/App')
-    if (typeof RemoteStartUpload !== 'function' || typeof RemoteWriteUploadChunk !== 'function') {
+    const appApi = await import('../../../wailsjs/go/main/App') as typeof import('../../../wailsjs/go/main/App') & {
+      RemoteStartUploadPath?: (sessionId: string, remoteDir: string, relativePath: string, total: number) => Promise<{ transferId: string }>
+    }
+    if (typeof appApi.RemoteStartUpload !== 'function' || typeof appApi.RemoteWriteUploadChunk !== 'function') {
       throw new Error('Upload API is not loaded. Restart wails dev to refresh Wails bindings.')
     }
-    const result = await RemoteStartUpload(props.sessionId, currentState().path, file.name, file.size)
+    const startUploadPath = appApi.RemoteStartUploadPath ?? (window as Window & {
+      go?: { main?: { App?: { RemoteStartUploadPath?: (sessionId: string, remoteDir: string, relativePath: string, total: number) => Promise<{ transferId: string }> } } }
+    }).go?.main?.App?.RemoteStartUploadPath
+    if (!startUploadPath && uploadPath.includes('/')) {
+      throw new Error('Folder upload API is not loaded. Restart wails dev to refresh Wails bindings.')
+    }
+    const result = startUploadPath
+      ? await startUploadPath(props.sessionId, currentState().path, uploadPath, file.size)
+      : await appApi.RemoteStartUpload(props.sessionId, currentState().path, file.name, file.size)
     replaceTransferId(localId, result.transferId)
     const chunkSize = 192 * 1024
     for (let offset = 0; offset < file.size; offset += chunkSize) {
       const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size))
       const encoded = await blobToBase64(chunk)
-      await RemoteWriteUploadChunk(result.transferId, encoded, false)
+      await appApi.RemoteWriteUploadChunk(result.transferId, encoded, false)
     }
-    await RemoteWriteUploadChunk(result.transferId, '', true)
+    await appApi.RemoteWriteUploadChunk(result.transferId, '', true)
   } catch (e) {
     const message = formatError(e)
     if (!message.toLowerCase().includes('canceled')) {
       error.value = message
       markTransferError(localId, message)
+    }
+  }
+}
+
+async function uploadLocalPath(path: string) {
+  if (!props.sessionId) return
+  error.value = ''
+  try {
+    const { RemoteUploadLocalFile } = await import('../../../wailsjs/go/main/App')
+    await RemoteUploadLocalFile(props.sessionId, path, currentState().path)
+  } catch (e) {
+    const message = formatError(e)
+    if (!message.toLowerCase().includes('canceled')) {
+      error.value = message
     }
   }
 }
@@ -244,11 +318,23 @@ async function download() {
 }
 
 async function startDownload(file: RemoteFile) {
-  if (!props.sessionId || file.isDir) return
+  if (!props.sessionId) return
   error.value = ''
   try {
-    const { RemoteStartDownload } = await import('../../../wailsjs/go/main/App')
-    await RemoteStartDownload(props.sessionId, file.path, file.name, file.size)
+    const appApi = await import('../../../wailsjs/go/main/App') as typeof import('../../../wailsjs/go/main/App') & {
+      RemoteStartDownloadDir?: (sessionId: string, remotePath: string, name: string) => Promise<{ transferId: string }>
+    }
+    if (file.isDir) {
+      const startDirDownload = appApi.RemoteStartDownloadDir ?? (window as Window & {
+        go?: { main?: { App?: { RemoteStartDownloadDir?: (sessionId: string, remotePath: string, name: string) => Promise<{ transferId: string }> } } }
+      }).go?.main?.App?.RemoteStartDownloadDir
+      if (!startDirDownload) {
+        throw new Error('Folder download API is not loaded. Restart wails dev to refresh Wails bindings.')
+      }
+      await startDirDownload(props.sessionId, file.path, file.name)
+    } else {
+      await appApi.RemoteStartDownload(props.sessionId, file.path, file.name, file.size)
+    }
   } catch (e) {
     const message = formatError(e)
     if (!message.toLowerCase().includes('canceled')) {
@@ -292,7 +378,7 @@ function closeContextMenu() {
 async function menuDownload() {
   const file = menu.value.file
   closeContextMenu()
-  if (file && !file.isDir) {
+  if (file) {
     await startDownload(file)
   }
 }
@@ -351,10 +437,57 @@ async function saveEdit() {
   }
 }
 
-function onDrop(event: DragEvent) {
+async function onDrop(event: DragEvent) {
   dragging.value = false
-  const dropped = Array.from(event.dataTransfer?.files ?? [])
-  dropped.forEach(file => uploadFile(file))
+  if ((event.dataTransfer?.files.length ?? 0) > 0) {
+    return
+  }
+  const dropped = await collectBrowserUploadFiles(event)
+  dropped.forEach(item => uploadFile(item.file, item.path))
+}
+
+async function collectBrowserUploadFiles(event: DragEvent): Promise<BrowserUploadFile[]> {
+  const entries = Array.from(event.dataTransfer?.items ?? [])
+    .map(item => (item as BrowserDataTransferItem).webkitGetAsEntry?.())
+    .filter((entry): entry is BrowserFileSystemEntry => Boolean(entry))
+  if (entries.length > 0) {
+    const nested = await Promise.all(entries.map(entry => readBrowserEntry(entry)))
+    return nested.flat()
+  }
+  return Array.from(event.dataTransfer?.files ?? []).map(file => ({
+    file,
+    path: normalizeBrowserUploadPath((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name),
+  }))
+}
+
+async function readBrowserEntry(entry: BrowserFileSystemEntry): Promise<BrowserUploadFile[]> {
+  if (entry.isFile) {
+    const file = await readBrowserFile(entry as BrowserFileSystemFileEntry)
+    return [{ file, path: normalizeBrowserUploadPath(entry.fullPath || file.name) }]
+  }
+  if (!entry.isDirectory) return []
+
+  const reader = (entry as BrowserFileSystemDirectoryEntry).createReader()
+  const children: BrowserFileSystemEntry[] = []
+  while (true) {
+    const batch = await readBrowserDirectoryBatch(reader)
+    if (batch.length === 0) break
+    children.push(...batch)
+  }
+  const nested = await Promise.all(children.map(child => readBrowserEntry(child)))
+  return nested.flat()
+}
+
+function readBrowserFile(entry: BrowserFileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => entry.file(resolve, reject))
+}
+
+function readBrowserDirectoryBatch(reader: ReturnType<BrowserFileSystemDirectoryEntry['createReader']>): Promise<BrowserFileSystemEntry[]> {
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject))
+}
+
+function normalizeBrowserUploadPath(path: string) {
+  return path.replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter(Boolean).join('/')
 }
 
 function onRemoteDragStart(file: RemoteFile) {
@@ -408,6 +541,14 @@ function markTransferError(id: string, message: string) {
   }
 }
 
+function removeTransfer(id: string) {
+  transfers.value = transfers.value.filter(transfer => transfer.id !== id)
+}
+
+function clearFinishedTransfers() {
+  transfers.value = transfers.value.filter(transfer => transfer.status !== 'done' && transfer.status !== 'error')
+}
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -423,6 +564,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 
 <template>
   <aside
+    ref="drawerEl"
     :class="['sftp-drawer', { dragging, resizing }]"
     :style="{ width: `${drawerWidth}px` }"
     aria-label="Remote file manager"
@@ -456,13 +598,31 @@ function blobToBase64(blob: Blob): Promise<string> {
       <button :disabled="loading || !sessionId" @click="load()">Refresh</button>
     </div>
 
+    <label v-if="sessionId" class="search-row">
+      <span>Search</span>
+      <input
+        v-model="currentState().search"
+        type="search"
+        spellcheck="false"
+        placeholder="Filter files and folders"
+      />
+      <button
+        v-if="currentState().search"
+        type="button"
+        title="Clear search"
+        @click="currentState().search = ''"
+      >
+        Clear
+      </button>
+    </label>
+
     <div v-if="error" class="drawer-error">{{ error }}</div>
     <div v-else-if="loading" class="drawer-state">Loading remote files...</div>
     <div v-else-if="!sessionId" class="drawer-state">Open a session to browse files.</div>
 
     <div v-else class="file-list">
       <button
-        v-for="file in currentState().files"
+        v-for="file in visibleFiles()"
         :key="file.path"
         :class="['file-row', { selected: currentState().selectedPath === file.path }]"
         :title="file.path"
@@ -484,6 +644,7 @@ function blobToBase64(blob: Blob): Promise<string> {
         </span>
       </button>
       <div v-if="currentState().files.length === 0" class="drawer-state">Directory is empty.</div>
+      <div v-else-if="visibleFiles().length === 0" class="drawer-state">No files or folders match this search.</div>
     </div>
 
     <div class="drop-zone">
@@ -493,12 +654,25 @@ function blobToBase64(blob: Blob): Promise<string> {
     <div v-if="transfers.length > 0" class="transfer-list">
       <div class="transfer-head">
         <span class="wf-label">Transfers</span>
-        <span>{{ transfers.length }}</span>
+        <span class="transfer-head-actions">
+          <button
+            v-if="transfers.some(transfer => transfer.status === 'done' || transfer.status === 'error')"
+            class="transfer-clear"
+            title="Clear finished transfers"
+            @click="clearFinishedTransfers"
+          >
+            Clear
+          </button>
+          <span>{{ transfers.length }}</span>
+        </span>
       </div>
       <div v-for="transfer in transfers" :key="transfer.id" class="transfer-row">
         <div class="transfer-meta">
           <span>{{ transfer.kind === 'upload' ? 'Upload' : 'Download' }} {{ transfer.name }}</span>
-          <strong>{{ transfer.status === 'error' ? 'failed' : `${Math.round(transfer.percent || 0)}%` }}</strong>
+          <span class="transfer-actions">
+            <strong>{{ transfer.status === 'error' ? 'failed' : `${Math.round(transfer.percent || 0)}%` }}</strong>
+            <button class="transfer-remove" title="Remove transfer record" @click="removeTransfer(transfer.id)">x</button>
+          </span>
         </div>
         <div v-if="transfer.targetPath" class="transfer-target">{{ transfer.targetPath }}</div>
         <div class="progress"><i :style="{ width: `${transfer.status === 'done' ? 100 : transfer.percent || 0}%` }" /></div>
@@ -513,7 +687,7 @@ function blobToBase64(blob: Blob): Promise<string> {
       @click.stop
     >
       <button :disabled="menu.file?.isDir" @click="menuEdit">Edit</button>
-      <button :disabled="menu.file?.isDir" @click="menuDownload">Download</button>
+      <button @click="menuDownload">Download</button>
       <button @click="menuRename">Rename</button>
       <button class="danger" @click="menuDelete">Delete</button>
     </div>
@@ -646,7 +820,8 @@ function blobToBase64(blob: Blob): Promise<string> {
   padding: 8px 14px;
   border-bottom: 1.2px solid var(--faint);
 }
-.drawer-actions button {
+.drawer-actions button,
+.search-row button {
   height: 26px;
   padding: 0 10px;
   border: 1.2px solid var(--ink);
@@ -660,6 +835,32 @@ function blobToBase64(blob: Blob): Promise<string> {
 .drawer-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.search-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1.2px solid var(--faint);
+  color: var(--pencil);
+  font-family: 'Kalam', 'Caveat', cursive;
+}
+.search-row input {
+  min-width: 0;
+  height: 28px;
+  border: 1.2px dashed var(--pencil);
+  border-radius: var(--radius);
+  background: rgba(250, 248, 244, 0.58);
+  color: var(--ink);
+  outline: none;
+  padding: 0 9px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.search-row input:focus {
+  border-color: var(--ink);
+  background: var(--paper);
 }
 .drawer-error,
 .drawer-state,
@@ -794,6 +995,13 @@ function blobToBase64(blob: Blob): Promise<string> {
   justify-content: space-between;
   gap: 8px;
 }
+.transfer-head-actions,
+.transfer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
 .transfer-head {
   margin-bottom: 8px;
   color: var(--pencil);
@@ -817,6 +1025,28 @@ function blobToBase64(blob: Blob): Promise<string> {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   color: var(--pencil);
+}
+.transfer-clear,
+.transfer-remove {
+  height: 20px;
+  padding: 0 6px;
+  border: 1.1px solid var(--faint);
+  border-radius: 4px;
+  background: rgba(250, 248, 244, 0.72);
+  color: var(--pencil);
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+.transfer-clear:hover,
+.transfer-remove:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--highlight);
+}
+.transfer-remove {
+  width: 20px;
+  padding: 0;
 }
 .transfer-target {
   margin-top: 2px;

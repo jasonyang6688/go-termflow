@@ -74,8 +74,16 @@ export function RemoteStartDownload(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RemoteStartDownload'](arg1, arg2, arg3, arg4);
 }
 
+export function RemoteStartDownloadDir(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RemoteStartDownloadDir'](arg1, arg2, arg3);
+}
+
 export function RemoteStartUpload(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RemoteStartUpload'](arg1, arg2, arg3, arg4);
+}
+
+export function RemoteStartUploadPath(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RemoteStartUploadPath'](arg1, arg2, arg3, arg4);
 }
 
 export function RemoteUploadFile(arg1, arg2) {

@@ -39,7 +39,11 @@ export function RemoteRename(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RemoteStartDownload(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.TransferStartResult>;
 
+export function RemoteStartDownloadDir(arg1:string,arg2:string,arg3:string):Promise<main.TransferStartResult>;
+
 export function RemoteStartUpload(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.TransferStartResult>;
+
+export function RemoteStartUploadPath(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.TransferStartResult>;
 
 export function RemoteUploadFile(arg1:string,arg2:string):Promise<main.RemoteFile>;
 

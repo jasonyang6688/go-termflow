@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import { ensureConnectionsLoaded, ensureFileSession, selectedFileConnection } from '../../stores/fileWorkbench'
+import { registerFileDropTarget } from '../../stores/fileDrops'
 
 interface FileItem {
   name: string
@@ -14,6 +15,7 @@ interface FileItem {
 interface PaneState {
   path: string
   pathDraft: string
+  search: string
   files: FileItem[]
   selectedPath: string
   loading: boolean
@@ -33,12 +35,39 @@ interface TransferProgress {
   targetPath?: string
 }
 
+interface BrowserUploadFile {
+  file: File
+  path: string
+}
+
+interface BrowserFileSystemEntry {
+  isFile: boolean
+  isDirectory: boolean
+  name: string
+  fullPath: string
+}
+
+interface BrowserFileSystemFileEntry extends BrowserFileSystemEntry {
+  file(success: (file: File) => void, error?: (error: DOMException) => void): void
+}
+
+interface BrowserFileSystemDirectoryEntry extends BrowserFileSystemEntry {
+  createReader(): {
+    readEntries(success: (entries: BrowserFileSystemEntry[]) => void, error?: (error: DOMException) => void): void
+  }
+}
+
+interface BrowserDataTransferItem extends DataTransferItem {
+  webkitGetAsEntry?: () => BrowserFileSystemEntry | null
+}
+
 const local = ref<PaneState>(emptyPane(''))
 const remote = ref<PaneState>(emptyPane('~'))
 const remoteStates = ref<Record<number, PaneState>>({})
 const remoteSessionId = ref('')
 const connecting = ref(false)
 const transfers = ref<TransferProgress[]>([])
+const remotePaneEl = ref<HTMLElement | null>(null)
 const menu = ref<{ open: boolean; x: number; y: number; scope: 'local' | 'remote'; file: FileItem | null }>({
   open: false,
   x: 0,
@@ -47,6 +76,7 @@ const menu = ref<{ open: boolean; x: number; y: number; scope: 'local' | 'remote
   file: null,
 })
 let removeTransferListener: (() => void) | undefined
+let removeFileDropTarget: (() => void) | undefined
 let connectToken = 0
 
 const selectedName = computed(() => selectedFileConnection.value?.name || 'No server selected')
@@ -61,15 +91,33 @@ onMounted(async () => {
       if (progress.kind === 'upload') loadRemote()
     }
   })
+  removeFileDropTarget = registerFileDropTarget({
+    element: () => remotePaneEl.value,
+    enabled: () => Boolean(remoteSessionId.value),
+    onDrop: paths => paths.forEach(path => uploadLocalPath({ name: baseName(path), path, isDir: false, size: 0, modified: 0 })),
+  })
   await ensureConnectionsLoaded()
   await Promise.all([loadLocal(), connectRemote()])
 })
-onUnmounted(() => removeTransferListener?.())
+onUnmounted(() => {
+  removeTransferListener?.()
+  removeFileDropTarget?.()
+})
 
 watch(selectedFileConnection, () => connectRemote())
 
 function emptyPane(path: string): PaneState {
-  return { path, pathDraft: path, files: [], selectedPath: '', loading: false, error: '' }
+  return { path, pathDraft: path, search: '', files: [], selectedPath: '', loading: false, error: '' }
+}
+
+function visibleFiles(scope: 'local' | 'remote') {
+  const state = pane(scope)
+  const query = state.search.trim().toLowerCase()
+  if (!query) return state.files
+  return state.files.filter(file =>
+    file.name.toLowerCase().includes(query) ||
+    file.path.toLowerCase().includes(query)
+  )
 }
 
 async function connectRemote() {
@@ -219,6 +267,13 @@ async function deleteMenu() {
   }
 }
 
+async function uploadMenu() {
+  const { scope, file } = menu.value
+  menu.value.open = false
+  if (scope !== 'local' || !file || !remoteSessionId.value) return
+  await uploadLocalPath(file)
+}
+
 function dragLocal(event: DragEvent, file: FileItem) {
   event.dataTransfer?.setData('application/x-termflow-local-file', JSON.stringify(file))
 }
@@ -230,13 +285,16 @@ function dragRemote(event: DragEvent, file: FileItem) {
 
 async function dropOnRemote(event: DragEvent) {
   const localFile = parseDrag(event, 'application/x-termflow-local-file')
-  if (localFile && !localFile.isDir) {
+  if (localFile) {
     await uploadLocalPath(localFile)
     return
   }
-  const osFiles = Array.from(event.dataTransfer?.files ?? [])
-  for (const file of osFiles) {
-    await uploadBrowserFile(file)
+  if ((event.dataTransfer?.files.length ?? 0) > 0) {
+    return
+  }
+  const osFiles = await collectBrowserUploadFiles(event)
+  for (const item of osFiles) {
+    await uploadBrowserFile(item.file, item.path)
   }
 }
 
@@ -260,19 +318,74 @@ async function uploadLocalPath(file: FileItem) {
   }
 }
 
-async function uploadBrowserFile(file: File) {
+async function uploadBrowserFile(file: File, relativePath = file.name) {
   try {
-    const { RemoteStartUpload, RemoteWriteUploadChunk } = await import('../../../wailsjs/go/main/App')
-    const result = await RemoteStartUpload(remoteSessionId.value, remote.value.path, file.name, file.size)
+    const appApi = await import('../../../wailsjs/go/main/App') as typeof import('../../../wailsjs/go/main/App') & {
+      RemoteStartUploadPath?: (sessionId: string, remoteDir: string, relativePath: string, total: number) => Promise<{ transferId: string }>
+    }
+    const uploadPath = normalizeBrowserUploadPath(relativePath || file.name)
+    const startUploadPath = appApi.RemoteStartUploadPath ?? (window as Window & {
+      go?: { main?: { App?: { RemoteStartUploadPath?: (sessionId: string, remoteDir: string, relativePath: string, total: number) => Promise<{ transferId: string }> } } }
+    }).go?.main?.App?.RemoteStartUploadPath
+    if (!startUploadPath && uploadPath.includes('/')) {
+      throw new Error('Folder upload API is not loaded. Restart wails dev to refresh Wails bindings.')
+    }
+    const result = startUploadPath
+      ? await startUploadPath(remoteSessionId.value, remote.value.path, uploadPath, file.size)
+      : await appApi.RemoteStartUpload(remoteSessionId.value, remote.value.path, file.name, file.size)
     const chunkSize = 192 * 1024
     for (let offset = 0; offset < file.size; offset += chunkSize) {
       const encoded = await blobToBase64(file.slice(offset, Math.min(offset + chunkSize, file.size)))
-      await RemoteWriteUploadChunk(result.transferId, encoded, false)
+      await appApi.RemoteWriteUploadChunk(result.transferId, encoded, false)
     }
-    await RemoteWriteUploadChunk(result.transferId, '', true)
+    await appApi.RemoteWriteUploadChunk(result.transferId, '', true)
   } catch (e) {
     setError('remote', e)
   }
+}
+
+async function collectBrowserUploadFiles(event: DragEvent): Promise<BrowserUploadFile[]> {
+  const entries = Array.from(event.dataTransfer?.items ?? [])
+    .map(item => (item as BrowserDataTransferItem).webkitGetAsEntry?.())
+    .filter((entry): entry is BrowserFileSystemEntry => Boolean(entry))
+  if (entries.length > 0) {
+    const nested = await Promise.all(entries.map(entry => readBrowserEntry(entry)))
+    return nested.flat()
+  }
+  return Array.from(event.dataTransfer?.files ?? []).map(file => ({
+    file,
+    path: normalizeBrowserUploadPath((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name),
+  }))
+}
+
+async function readBrowserEntry(entry: BrowserFileSystemEntry): Promise<BrowserUploadFile[]> {
+  if (entry.isFile) {
+    const file = await readBrowserFile(entry as BrowserFileSystemFileEntry)
+    return [{ file, path: normalizeBrowserUploadPath(entry.fullPath || file.name) }]
+  }
+  if (!entry.isDirectory) return []
+
+  const reader = (entry as BrowserFileSystemDirectoryEntry).createReader()
+  const children: BrowserFileSystemEntry[] = []
+  while (true) {
+    const batch = await readBrowserDirectoryBatch(reader)
+    if (batch.length === 0) break
+    children.push(...batch)
+  }
+  const nested = await Promise.all(children.map(child => readBrowserEntry(child)))
+  return nested.flat()
+}
+
+function readBrowserFile(entry: BrowserFileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => entry.file(resolve, reject))
+}
+
+function readBrowserDirectoryBatch(reader: ReturnType<BrowserFileSystemDirectoryEntry['createReader']>): Promise<BrowserFileSystemEntry[]> {
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject))
+}
+
+function normalizeBrowserUploadPath(path: string) {
+  return path.replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter(Boolean).join('/')
 }
 
 function parseDrag(event: DragEvent, type: string): FileItem | null {
@@ -283,6 +396,19 @@ function parseDrag(event: DragEvent, type: string): FileItem | null {
   } catch {
     return null
   }
+}
+
+function baseName(path: string) {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.slice(normalized.lastIndexOf('/') + 1) || normalized
+}
+
+function removeTransfer(id: string) {
+  transfers.value = transfers.value.filter(transfer => transfer.id !== id)
+}
+
+function clearFinishedTransfers() {
+  transfers.value = transfers.value.filter(transfer => transfer.status !== 'done' && transfer.status !== 'error')
 }
 
 function pane(scope: 'local' | 'remote') {
@@ -337,14 +463,19 @@ function blobToBase64(blob: Blob): Promise<string> {
         <button @click="loadLocal(parentPath('local'))">Parent</button>
         <button @click="mkdir('local')">Mkdir</button>
       </div>
+      <label class="search-row">
+        <span>Search</span>
+        <input v-model="local.search" type="search" spellcheck="false" placeholder="Filter local files and folders" />
+        <button v-if="local.search" type="button" title="Clear search" @click="local.search = ''">Clear</button>
+      </label>
       <div v-if="local.error" class="pane-error">{{ local.error }}</div>
       <div v-else-if="local.loading" class="pane-state">Loading local files...</div>
       <div v-else class="file-list">
         <button
-          v-for="file in local.files"
+          v-for="file in visibleFiles('local')"
           :key="file.path"
           :class="['file-row', { selected: local.selectedPath === file.path, folder: file.isDir }]"
-          :draggable="!file.isDir"
+          draggable="true"
           :title="file.path"
           @click="local.selectedPath = file.path"
           @dblclick="openItem('local', file)"
@@ -358,10 +489,12 @@ function blobToBase64(blob: Blob): Promise<string> {
           </span>
           <span class="file-size">{{ file.isDir ? 'folder' : formatSize(file.size) }}</span>
         </button>
+        <div v-if="local.files.length === 0" class="pane-state">Directory is empty.</div>
+        <div v-else-if="visibleFiles('local').length === 0" class="pane-state">No local files or folders match this search.</div>
       </div>
     </section>
 
-    <section class="pane remote-pane" @dragover.prevent @drop.prevent="dropOnRemote">
+    <section ref="remotePaneEl" class="pane remote-pane" @dragover.prevent @drop.prevent="dropOnRemote">
       <header class="pane-head">
         <div>
           <h2>Remote Files</h2>
@@ -374,12 +507,17 @@ function blobToBase64(blob: Blob): Promise<string> {
         <button :disabled="!remoteSessionId" @click="loadRemote(parentPath('remote'))">Parent</button>
         <button :disabled="!remoteSessionId" @click="mkdir('remote')">Mkdir</button>
       </div>
+      <label v-if="remoteSessionId" class="search-row">
+        <span>Search</span>
+        <input v-model="remote.search" type="search" spellcheck="false" placeholder="Filter remote files and folders" />
+        <button v-if="remote.search" type="button" title="Clear search" @click="remote.search = ''">Clear</button>
+      </label>
       <div v-if="remote.error" class="pane-error">{{ remote.error }}</div>
       <div v-else-if="connecting || remote.loading" class="pane-state">{{ connecting ? 'Connecting remote server...' : 'Loading remote files...' }}</div>
       <div v-else-if="!remoteSessionId" class="pane-state">Select a server from the left.</div>
       <div v-else class="file-list">
         <button
-          v-for="file in remote.files"
+          v-for="file in visibleFiles('remote')"
           :key="file.path"
           :class="['file-row', { selected: remote.selectedPath === file.path, folder: file.isDir }]"
           :draggable="!file.isDir"
@@ -396,15 +534,30 @@ function blobToBase64(blob: Blob): Promise<string> {
           </span>
           <span class="file-size">{{ file.isDir ? 'folder' : formatSize(file.size) }}</span>
         </button>
+        <div v-if="remote.files.length === 0" class="pane-state">Directory is empty.</div>
+        <div v-else-if="visibleFiles('remote').length === 0" class="pane-state">No remote files or folders match this search.</div>
       </div>
     </section>
 
     <aside v-if="transfers.length" class="transfer-panel">
-      <div class="transfer-title">Transfers</div>
+      <div class="transfer-title">
+        <span>Transfers</span>
+        <button
+          v-if="transfers.some(transfer => transfer.status === 'done' || transfer.status === 'error')"
+          class="transfer-clear"
+          title="Clear finished transfers"
+          @click="clearFinishedTransfers"
+        >
+          Clear
+        </button>
+      </div>
       <div v-for="transfer in transfers.slice(0, 5)" :key="transfer.id" class="transfer-row">
         <div class="transfer-line">
           <span>{{ transfer.kind }} {{ transfer.name }}</span>
-          <strong>{{ transfer.status === 'error' ? 'failed' : `${Math.round(transfer.percent || 0)}%` }}</strong>
+          <span class="transfer-actions">
+            <strong>{{ transfer.status === 'error' ? 'failed' : `${Math.round(transfer.percent || 0)}%` }}</strong>
+            <button class="transfer-remove" title="Remove transfer record" @click="removeTransfer(transfer.id)">x</button>
+          </span>
         </div>
         <small>{{ transfer.targetPath || transfer.savePath }}</small>
         <div class="progress"><i :style="{ width: `${transfer.status === 'done' ? 100 : transfer.percent || 0}%` }" /></div>
@@ -413,6 +566,7 @@ function blobToBase64(blob: Blob): Promise<string> {
     </aside>
 
     <div v-if="menu.open" class="context-menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @click.stop>
+      <button v-if="menu.scope === 'local'" :disabled="!remoteSessionId" @click="uploadMenu">Upload</button>
       <button @click="renameMenu">Rename</button>
       <button class="danger" @click="deleteMenu">Delete</button>
     </div>
@@ -432,6 +586,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 .pane {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--paper);
@@ -499,6 +654,32 @@ button:disabled {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   outline: none;
+}
+.search-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1.2px solid var(--faint);
+  color: var(--pencil);
+  font-family: 'Kalam', 'Caveat', cursive;
+}
+.search-row input {
+  min-width: 0;
+  height: 28px;
+  border: 1.2px dashed var(--pencil);
+  border-radius: var(--radius);
+  background: rgba(250, 248, 244, 0.58);
+  color: var(--ink);
+  outline: none;
+  padding: 0 9px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.search-row input:focus {
+  border-color: var(--ink);
+  background: var(--paper);
 }
 .pane-state,
 .pane-error {
@@ -584,6 +765,10 @@ button:disabled {
   padding: 10px 12px;
 }
 .transfer-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 7px;
   color: var(--pencil);
   font-family: 'JetBrains Mono', monospace;
@@ -594,9 +779,36 @@ button:disabled {
 }
 .transfer-line {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   font-family: 'Kalam', 'Caveat', cursive;
+}
+.transfer-line > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.transfer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.transfer-clear,
+.transfer-remove {
+  min-height: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+.transfer-remove {
+  width: 20px;
+  padding: 0;
+  color: var(--pencil);
 }
 .transfer-row small,
 .transfer-row em {

@@ -12,7 +12,7 @@ const builtInBackgrounds = [
     id: 'paper-grid',
     label: 'Paper grid',
     src: bgPaperGrid,
-    overlay: 0.72,
+    overlay: 0.56,
     terminalFg: '#FAF8F4',
     folderColor: '#5CF2A5',
     fileColor: '#ECE6DB',
@@ -22,7 +22,7 @@ const builtInBackgrounds = [
     id: 'ops-map',
     label: 'Ops map',
     src: bgOpsMap,
-    overlay: 0.76,
+    overlay: 0.6,
     terminalFg: '#FAF8F4',
     folderColor: '#55D6B2',
     fileColor: '#E7E1D6',
@@ -32,7 +32,7 @@ const builtInBackgrounds = [
     id: 'ink-paper',
     label: 'Ink paper',
     src: bgInkPaper,
-    overlay: 0.74,
+    overlay: 0.58,
     terminalFg: '#FAF8F4',
     folderColor: '#8EE0A3',
     fileColor: '#ECE6DB',
@@ -42,7 +42,7 @@ const builtInBackgrounds = [
     id: 'hologram-phone',
     label: 'Hologram phone',
     src: bgHologramPhone,
-    overlay: 0.82,
+    overlay: 0.54,
     terminalFg: '#FAF8F4',
     folderColor: '#5CF2A5',
     fileColor: '#ECE6DB',
@@ -164,8 +164,8 @@ function averageImageColor(src: string): Promise<{ r: number; g: number; b: numb
           <span>Background mask</span>
           <input
             type="range"
-            min="0.35"
-            max="0.95"
+            min="0.2"
+            max="0.72"
             step="0.01"
             :value="settings.overlay"
             @input="updateSettings({ overlay: Number(($event.target as HTMLInputElement).value) })"

@@ -25,7 +25,7 @@ function select(panel: Panel) {
 <template>
   <nav class="rail">
     <div class="rail-top">
-      <div class="app-logo">T</div>
+      <button class="app-logo" title="Home" @click="select('connections')">T</button>
     </div>
     <button
       v-for="item in items"
@@ -34,7 +34,7 @@ function select(panel: Panel) {
       :title="item.title"
       @click="select(item.id)"
     >
-      {{ item.icon }}
+      <span>{{ item.icon }}</span>
     </button>
   </nav>
 </template>
@@ -66,6 +66,7 @@ function select(panel: Panel) {
   height: 28px;
   border: 2px solid var(--ink);
   border-radius: 6px;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -74,6 +75,10 @@ function select(panel: Panel) {
   color: var(--ink);
   font-family: 'Caveat', cursive;
   -webkit-app-region: no-drag;
+  cursor: pointer;
+}
+.app-logo:hover {
+  background: var(--highlight);
 }
 .rail-btn {
   width: 40px;
@@ -87,6 +92,7 @@ function select(panel: Panel) {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   transition: background 0.1s, color 0.1s;
 }
 .rail-btn:hover { background: var(--highlight); color: var(--ink); }

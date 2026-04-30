@@ -1,12 +1,14 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -515,6 +517,14 @@ func (a *App) RemoteUploadFile(sessionID string, remoteDir string) (RemoteFile, 
 }
 
 func (a *App) RemoteStartUpload(sessionID string, remoteDir string, name string, total int64) (TransferStartResult, error) {
+	return a.remoteStartUploadPath(sessionID, remoteDir, name, total, true)
+}
+
+func (a *App) RemoteStartUploadPath(sessionID string, remoteDir string, relativePath string, total int64) (TransferStartResult, error) {
+	return a.remoteStartUploadPath(sessionID, remoteDir, relativePath, total, false)
+}
+
+func (a *App) remoteStartUploadPath(sessionID string, remoteDir string, relativePath string, total int64, baseNameOnly bool) (TransferStartResult, error) {
 	sess, ok := a.sshMgr.Get(sessionID)
 	if !ok {
 		return TransferStartResult{}, fmt.Errorf("session %q not found", sessionID)
@@ -522,7 +532,14 @@ func (a *App) RemoteStartUpload(sessionID string, remoteDir string, name string,
 	if strings.TrimSpace(remoteDir) == "" {
 		remoteDir = "~"
 	}
-	name = filepath.Base(strings.TrimSpace(name))
+	cleanPath, err := cleanRelativeRemotePath(relativePath, baseNameOnly)
+	if err != nil {
+		return TransferStartResult{}, err
+	}
+	name := cleanPath
+	if baseNameOnly {
+		name = filepath.Base(cleanPath)
+	}
 	if name == "." || name == "" {
 		return TransferStartResult{}, fmt.Errorf("file name is required")
 	}
@@ -537,7 +554,7 @@ func (a *App) RemoteStartUpload(sessionID string, remoteDir string, name string,
 	a.emitTransfer(TransferProgress{ID: id, Name: name, Kind: "upload", Total: total, Status: "running"})
 
 	go func() {
-		cmd := fmt.Sprintf("cd -- %s && cat > %s", shellQuote(remoteDir), shellQuote(name))
+		cmd := fmt.Sprintf("cd -- %s && mkdir -p -- %s && cat > %s", shellQuote(remoteDir), shellQuote(pathpkg.Dir(cleanPath)), shellQuote(cleanPath))
 		out, err := sess.RunWithInput(cmd, reader)
 		reader.Close()
 		a.uploadMu.Lock()
@@ -600,7 +617,7 @@ func (a *App) RemoteUploadLocalFile(sessionID string, localPath string, remoteDi
 		return TransferStartResult{}, err
 	}
 	if info.IsDir() {
-		return TransferStartResult{}, fmt.Errorf("folder upload is not supported yet")
+		return a.remoteUploadLocalDir(sess, localPath, remoteDir, info)
 	}
 
 	file, err := os.Open(localPath)
@@ -626,6 +643,46 @@ func (a *App) RemoteUploadLocalFile(sessionID string, localPath string, remoteDi
 			return
 		}
 		a.emitTransfer(TransferProgress{ID: id, Name: name, Kind: "upload", Written: info.Size(), Total: info.Size(), Percent: 100, Status: "done", TargetPath: targetPath})
+	}()
+
+	return TransferStartResult{TransferID: id}, nil
+}
+
+func (a *App) remoteUploadLocalDir(sess ssh.ManagedSession, localPath string, remoteDir string, info os.FileInfo) (TransferStartResult, error) {
+	total, err := localDirRegularFileSize(localPath)
+	if err != nil {
+		return TransferStartResult{}, err
+	}
+	name := info.Name()
+	targetPath := joinRemotePath(remoteDir, name)
+	id := a.nextTransferID("up")
+	a.emitTransfer(TransferProgress{ID: id, Name: name, Kind: "upload", Total: total, Status: "running", TargetPath: targetPath})
+
+	go func() {
+		reader, writer := io.Pipe()
+		errCh := make(chan error, 1)
+		var written int64
+
+		go func() {
+			errCh <- writeLocalDirTar(localPath, name, writer, func(n int) {
+				written += int64(n)
+				a.emitTransfer(TransferProgress{ID: id, Name: name, Kind: "upload", Written: written, Total: total, Percent: transferPercent(written, total), Status: "running", TargetPath: targetPath})
+			})
+		}()
+
+		cmd := fmt.Sprintf("cd -- %s && tar -xf -", shellQuote(remoteDir))
+		out, runErr := sess.RunWithInput(cmd, reader)
+		_ = reader.Close()
+		tarErr := <-errCh
+		if runErr != nil {
+			a.emitTransfer(TransferProgress{ID: id, Name: name, Kind: "upload", Written: written, Total: total, Percent: transferPercent(written, total), Status: "error", Error: fmt.Sprintf("%v: %s", runErr, strings.TrimSpace(string(out))), TargetPath: targetPath})
+			return
+		}
+		if tarErr != nil {
+			a.emitTransfer(TransferProgress{ID: id, Name: name, Kind: "upload", Written: written, Total: total, Percent: transferPercent(written, total), Status: "error", Error: tarErr.Error(), TargetPath: targetPath})
+			return
+		}
+		a.emitTransfer(TransferProgress{ID: id, Name: name, Kind: "upload", Written: total, Total: total, Percent: 100, Status: "done", TargetPath: targetPath})
 	}()
 
 	return TransferStartResult{TransferID: id}, nil
@@ -811,6 +868,71 @@ func (a *App) RemoteStartDownload(sessionID string, remotePath string, name stri
 	return TransferStartResult{TransferID: id}, nil
 }
 
+func (a *App) RemoteStartDownloadDir(sessionID string, remotePath string, name string) (TransferStartResult, error) {
+	sess, ok := a.sshMgr.Get(sessionID)
+	if !ok {
+		return TransferStartResult{}, fmt.Errorf("session %q not found", sessionID)
+	}
+	remotePath = strings.TrimSpace(remotePath)
+	if remotePath == "" {
+		return TransferStartResult{}, fmt.Errorf("remote path is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		name = pathpkg.Base(strings.TrimRight(remotePath, "/"))
+	}
+	name = pathpkg.Base(strings.TrimRight(name, "/"))
+	if name == "." || name == "/" || name == "" {
+		name = "download"
+	}
+	defaultName := name + ".tar"
+
+	savePath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		Title:           "Download folder",
+		DefaultFilename: defaultName,
+	})
+	if err != nil {
+		return TransferStartResult{}, err
+	}
+	if savePath == "" {
+		return TransferStartResult{}, fmt.Errorf("download canceled")
+	}
+
+	file, err := os.Create(savePath)
+	if err != nil {
+		return TransferStartResult{}, err
+	}
+
+	parent := remoteParentPath(remotePath)
+	base := pathpkg.Base(strings.TrimRight(remotePath, "/"))
+	cmd := "tar -C " + shellQuote(parent) + " -cf - -- " + shellQuote(base)
+
+	id := a.nextTransferID("down")
+	a.emitTransfer(TransferProgress{ID: id, Name: defaultName, Kind: "download", Status: "running", SavePath: savePath})
+	go func() {
+		defer file.Close()
+		var written int64
+		out, err := sess.RunToWriter(cmd, file, func(n int) {
+			written += int64(n)
+			a.emitTransfer(TransferProgress{
+				ID:       id,
+				Name:     defaultName,
+				Kind:     "download",
+				Written:  written,
+				Percent:  0,
+				Status:   "running",
+				SavePath: savePath,
+			})
+		})
+		if err != nil {
+			a.emitTransfer(TransferProgress{ID: id, Name: defaultName, Kind: "download", Written: written, Percent: 0, Status: "error", Error: fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))), SavePath: savePath})
+			return
+		}
+		a.emitTransfer(TransferProgress{ID: id, Name: defaultName, Kind: "download", Written: written, Percent: 100, Status: "done", SavePath: savePath})
+	}()
+
+	return TransferStartResult{TransferID: id}, nil
+}
+
 func (a *App) RemoteMetrics(sessionID string) (RemoteMetrics, error) {
 	sess, ok := a.sshMgr.Get(sessionID)
 	if !ok {
@@ -964,6 +1086,107 @@ func remoteParentPath(path string) string {
 		return "/"
 	}
 	return trimmed[:index]
+}
+
+func cleanRelativeRemotePath(value string, baseNameOnly bool) (string, error) {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	if baseNameOnly {
+		value = pathpkg.Base(value)
+	}
+	cleaned := pathpkg.Clean(value)
+	if cleaned == "." || cleaned == "/" || cleaned == "" || strings.HasPrefix(cleaned, "../") || cleaned == ".." || pathpkg.IsAbs(cleaned) {
+		return "", fmt.Errorf("file path is required")
+	}
+	return cleaned, nil
+}
+
+func localDirRegularFileSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type().IsRegular() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
+func writeLocalDirTar(root string, baseName string, writer *io.PipeWriter, onRead func(int)) error {
+	tw := tar.NewWriter(writer)
+	closeWithError := func(err error) error {
+		_ = tw.Close()
+		if err != nil {
+			_ = writer.CloseWithError(err)
+			return err
+		}
+		if err := writer.Close(); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		tarName := filepath.ToSlash(filepath.Join(baseName, rel))
+		if rel == "." {
+			tarName = baseName
+		}
+		if entry.IsDir() {
+			tarName = strings.TrimRight(tarName, "/") + "/"
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = tarName
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(tw, progressReader{reader: file, onRead: onRead})
+		closeErr := file.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return err
+	})
+	if err != nil {
+		return closeWithError(err)
+	}
+	if err := tw.Close(); err != nil {
+		_ = writer.CloseWithError(err)
+		return err
+	}
+	return writer.Close()
 }
 
 func (a *App) nextTransferID(prefix string) string {

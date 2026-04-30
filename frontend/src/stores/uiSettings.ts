@@ -22,7 +22,7 @@ export interface AppPreferences {
 
 const defaultSettings: TerminalSettings = {
   backgroundImage: '',
-  overlay: 0.78,
+  overlay: 0.64,
   terminalFg: '#FAF8F4',
   folderColor: '#42D98D',
   fileColor: '#D8D2C8',
@@ -47,7 +47,7 @@ const preferences = ref<AppPreferences>(loadPreferences())
 
 export const terminalStyle = computed(() => ({
   '--terminal-bg-image': settings.value.backgroundImage ? `url(${settings.value.backgroundImage})` : 'none',
-  '--terminal-bg-overlay': String(settings.value.overlay),
+  '--terminal-bg-overlay': String(clampOverlay(settings.value.overlay)),
   '--terminal-fg': settings.value.terminalFg,
   '--remote-folder-color': settings.value.folderColor,
   '--remote-file-color': settings.value.fileColor,
@@ -55,7 +55,7 @@ export const terminalStyle = computed(() => ({
 }))
 
 export function updateSettings(next: Partial<TerminalSettings>) {
-  settings.value = { ...settings.value, ...next }
+  settings.value = normalizeSettings({ ...settings.value, ...next })
   saveSettings()
   applySettings()
 }
@@ -74,7 +74,7 @@ export function setBackgroundImage(dataUrl: string, average?: { r: number; g: nu
   const dark = average ? luminance(average) < 0.48 : true
   updateSettings({
     backgroundImage: dataUrl,
-    overlay: dark ? 0.72 : 0.84,
+    overlay: dark ? 0.58 : 0.7,
     terminalFg: dark ? '#FAF8F4' : '#1C1B19',
     folderColor: dark ? '#5CF2A5' : '#087A45',
     fileColor: dark ? '#ECE6DB' : '#2B2A28',
@@ -96,7 +96,7 @@ export function clearBackgroundImage() {
 export function applySettings() {
   const root = document.documentElement
   root.style.setProperty('--terminal-bg-image', settings.value.backgroundImage ? `url(${settings.value.backgroundImage})` : 'none')
-  root.style.setProperty('--terminal-bg-overlay', String(settings.value.overlay))
+  root.style.setProperty('--terminal-bg-overlay', String(clampOverlay(settings.value.overlay)))
   root.style.setProperty('--terminal-fg', settings.value.terminalFg)
   root.style.setProperty('--remote-folder-color', settings.value.folderColor)
   root.style.setProperty('--remote-file-color', settings.value.fileColor)
@@ -106,10 +106,22 @@ export function applySettings() {
 function loadSettings(): TerminalSettings {
   try {
     const raw = window.localStorage?.getItem(storageKey)
-    return raw ? { ...defaultSettings, ...JSON.parse(raw) } : { ...defaultSettings }
+    return raw ? normalizeSettings({ ...defaultSettings, ...JSON.parse(raw) }) : { ...defaultSettings }
   } catch {
     return { ...defaultSettings }
   }
+}
+
+function normalizeSettings(next: TerminalSettings): TerminalSettings {
+  return {
+    ...next,
+    overlay: clampOverlay(next.overlay),
+  }
+}
+
+function clampOverlay(value: number) {
+  if (!Number.isFinite(value)) return defaultSettings.overlay
+  return Math.min(0.72, Math.max(0.2, value))
 }
 
 function loadPreferences(): AppPreferences {
